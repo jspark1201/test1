@@ -1,0 +1,393 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>졸라맨 돌파 게임 v10</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+        }
+        canvas {
+            display: none;
+            width: 100%;
+            height: 100vh;
+            position: absolute;
+            top: 0;
+            left: 0;
+            z-index: 1;
+        }
+        #startScreen, #gameOverScreen {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+            width: 100%;
+            z-index: 2; /* 캔버스 위에 표시 */
+        }
+        #gameOverScreen {
+            display: none;
+        }
+        button {
+            padding: 10px 20px;
+            margin: 5px;
+            font-size: 16px;
+            width: 150px;
+            touch-action: manipulation; /* 터치 이벤트 최적화 */
+        }
+    </style>
+</head>
+<body>
+    <div id="startScreen">
+        <h1>졸라맨 돌파 게임</h1>
+        <h3>난이도를 선택하세요</h3>
+        <button id="easyBtn">쉬움</button><br>
+        <button id="mediumBtn">중간</button><br>
+        <button id="hardBtn">어려움</button><br>
+        <button id="impossibleBtn">못깰껄?</button>
+    </div>
+    <div id="gameOverScreen">
+        <h1>게임 오버</h1>
+        <h3 id="finalScore"></h3>
+        <button id="restartBtn">다시하기</button>
+    </div>
+    <canvas id="gameCanvas"></canvas>
+    <audio id="bgm" loop>
+        <source src="https://www.bensound.com/bensound-music/bensound-epic.mp3" type="audio/mp3">
+    </audio>
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const startScreen = document.getElementById('startScreen');
+        const gameOverScreen = document.getElementById('gameOverScreen');
+        const finalScoreText = document.getElementById('finalScore');
+        const bgm = document.getElementById('bgm');
+
+        // 버튼 요소
+        const easyBtn = document.getElementById('easyBtn');
+        const mediumBtn = document.getElementById('mediumBtn');
+        const hardBtn = document.getElementById('hardBtn');
+        const impossibleBtn = document.getElementById('impossibleBtn');
+        const restartBtn = document.getElementById('restartBtn');
+
+        // 캔버스 크기 동적 설정
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+
+        // 플레이어 설정
+        const player = {
+            x: canvas.width / 2,
+            y: canvas.height * 0.75,
+            size: Math.min(canvas.width, canvas.height) / 20
+        };
+
+        // 게임 변수
+        let enemies = [];
+        let enemySpeed = 2;
+        let lastEnemySpawn = 0;
+        let spawnInterval = 1000;
+        let score = 0;
+        let lastScoredY = 0;
+        let cameraY = 0;
+        let gameStartTime = 0;
+
+        // 입력 위치 변수
+        let inputX = player.x;
+        let inputY = player.y;
+
+        // 마우스 이벤트 (캔버스에만 적용)
+        canvas.addEventListener('mousemove', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            inputX = e.clientX - rect.left;
+            inputY = e.clientY - rect.top;
+        });
+
+        // 터치 이벤트 (캔버스에만 적용)
+        canvas.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            const touch = e.touches[0];
+            const rect = canvas.getBoundingClientRect();
+            inputX = touch.clientX - rect.left;
+            inputY = touch.clientY - rect.top;
+        });
+
+        canvas.addEventListener('touchmove', (e) => {
+            e.preventDefault();
+            const touch = e.touches[0];
+            const rect = canvas.getBoundingClientRect();
+            inputX = touch.clientX - rect.left;
+            inputY = touch.clientY - rect.top;
+        });
+
+        canvas.addEventListener('touchend', (e) => {
+            e.preventDefault();
+        });
+
+        // 버튼 이벤트 (마우스와 터치 모두 지원)
+        function addButtonEvents(btn, callback) {
+            btn.addEventListener('click', callback);
+            btn.addEventListener('touchstart', (e) => {
+                e.preventDefault();
+                callback();
+            });
+        }
+
+        addButtonEvents(easyBtn, () => startGame(1));
+        addButtonEvents(mediumBtn, () => startGame(2));
+        addButtonEvents(hardBtn, () => startGame(4));
+        addButtonEvents(impossibleBtn, () => startGame(16));
+        addButtonEvents(restartBtn, restartGame);
+
+        // 게임 시작
+        function startGame(speedMultiplier) {
+            enemySpeed = 2 * speedMultiplier;
+            startScreen.style.display = 'none';
+            canvas.style.display = 'block';
+            bgm.play();
+            gameStartTime = performance.now();
+            requestAnimationFrame(gameLoop);
+        }
+
+        // 게임 재시작
+        function restartGame() {
+            gameOverScreen.style.display = 'none';
+            startScreen.style.display = 'block';
+            enemies = [];
+            score = 0;
+            lastScoredY = 0;
+            cameraY = 0;
+            player.x = canvas.width / 2;
+            player.y = canvas.height * 0.75;
+            inputX = player.x;
+            inputY = player.y;
+            bgm.currentTime = 0;
+        }
+
+        // 게임 루프
+        function gameLoop(timestamp) {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // 플레이어 이동
+            player.x = inputX;
+            player.y = inputY;
+
+            // 카메라 조정
+            cameraY = player.y - canvas.height * 0.75;
+
+            // 3초 동안 적 생성 안 함
+            if (timestamp - gameStartTime > 3000) {
+                if (timestamp - lastEnemySpawn > spawnInterval) {
+                    spawnEnemies();
+                    lastEnemySpawn = timestamp;
+                }
+            }
+
+            // 적 업데이트
+            enemies = enemies.filter(enemy => enemy.y - cameraY < canvas.height);
+            enemies.forEach(enemy => {
+                enemy.y += enemySpeed;
+
+                // 충돌 감지
+                if (isColliding(player, enemy, cameraY)) {
+                    endGame();
+                    return;
+                }
+            });
+
+            // 점수 계산
+            updateScore();
+
+            // 그리기
+            drawSceneWithVision(timestamp);
+
+            requestAnimationFrame(gameLoop);
+        }
+
+        // 적 생성
+        function spawnEnemies() {
+            const enemyWidth = canvas.width / 16;
+            const minGaps = 2;
+            const maxGaps = 4;
+            const gapSize = canvas.width / 8;
+            let gaps = Math.floor(Math.random() * (maxGaps - minGaps + 1)) + minGaps;
+            let gapPositions = [];
+
+            for (let i = 0; i < gaps; i++) {
+                let pos;
+                do {
+                    pos = Math.random() * (canvas.width - gapSize);
+                } while (gapPositions.some(p => Math.abs(p - pos) < gapSize));
+                gapPositions.push(pos);
+            }
+
+            for (let x = 0; x < canvas.width; x += enemyWidth) {
+                let isGap = gapPositions.some(pos => x > pos && x < pos + gapSize);
+                if (!isGap) {
+                    enemies.push({
+                        x: x + enemyWidth / 4,
+                        y: -cameraY,
+                        size: player.size
+                    });
+                }
+            }
+        }
+
+        // 충돌 감지
+        function isColliding(player, enemy, cameraY) {
+            const playerHeight = player.size * 2;
+            const playerWidth = player.size;
+            const enemyHeight = enemy.size * 2;
+            const enemyWidth = enemy.size;
+            return player.x - playerWidth / 2 < enemy.x + enemyWidth / 2 &&
+                   player.x + playerWidth / 2 > enemy.x - enemyWidth / 2 &&
+                   player.y - playerHeight / 2 < enemy.y - cameraY + enemyHeight / 2 &&
+                   player.y + playerHeight / 2 > enemy.y - cameraY - enemyHeight / 2;
+        }
+
+        // 점수 업데이트
+        function updateScore() {
+            const sectionHeight = canvas.height / 6;
+            if (Math.floor((cameraY - lastScoredY) / sectionHeight) > 0) {
+                score += 100;
+                lastScoredY = cameraY;
+            }
+        }
+
+        // 게임 오버 처리
+        function endGame() {
+            canvas.style.display = 'none';
+            gameOverScreen.style.display = 'block';
+            finalScoreText.textContent = `최종 점수: ${score}`;
+            bgm.pause();
+        }
+
+        // 피곤한 직장인 그리기
+        function drawTiredWorker(x, y) {
+            ctx.strokeStyle = 'blue';
+            ctx.lineWidth = 2;
+
+            ctx.beginPath();
+            ctx.arc(x, y - player.size, player.size / 2, 0, Math.PI * 2);
+            ctx.stroke();
+
+            ctx.beginPath();
+            ctx.moveTo(x - player.size / 2, y - player.size * 1.2);
+            ctx.lineTo(x - player.size / 3, y - player.size);
+            ctx.moveTo(x + player.size / 2, y - player.size * 1.2);
+            ctx.lineTo(x + player.size / 3, y - player.size);
+            ctx.stroke();
+
+            ctx.beginPath();
+            ctx.moveTo(x, y - player.size / 2);
+            ctx.lineTo(x, y + player.size);
+            ctx.stroke();
+
+            ctx.fillStyle = 'red';
+            ctx.beginPath();
+            ctx.moveTo(x, y - player.size / 2);
+            ctx.lineTo(x - player.size / 4, y);
+            ctx.lineTo(x + player.size / 4, y);
+            ctx.fill();
+
+            ctx.strokeStyle = 'blue';
+            ctx.beginPath();
+            ctx.moveTo(x - player.size / 2, y);
+            ctx.lineTo(x + player.size / 2, y);
+            ctx.stroke();
+
+            ctx.beginPath();
+            ctx.moveTo(x - player.size / 2, y + player.size);
+            ctx.lineTo(x, y + player.size / 2);
+            ctx.stroke();
+            ctx.beginPath();
+            ctx.moveTo(x + player.size / 2, y + player.size);
+            ctx.lineTo(x, y + player.size / 2);
+            ctx.stroke();
+
+            ctx.fillStyle = 'gray';
+            ctx.beginPath();
+            ctx.arc(x - player.size / 4, y - player.size * 0.7, player.size / 8, 0, Math.PI * 2);
+            ctx.arc(x + player.size / 4, y - player.size * 0.7, player.size / 8, 0, Math.PI * 2);
+            ctx.fill();
+        }
+
+        // 졸라맨 (적) 그리기
+        function drawZollaman(x, y, color) {
+            ctx.strokeStyle = color;
+            ctx.lineWidth = 2;
+
+            ctx.beginPath();
+            ctx.arc(x, y - player.size, player.size / 2, 0, Math.PI * 2);
+            ctx.stroke();
+
+            ctx.beginPath();
+            ctx.moveTo(x, y - player.size / 2);
+            ctx.lineTo(x, y + player.size);
+            ctx.stroke();
+
+            ctx.beginPath();
+            ctx.moveTo(x - player.size / 2, y);
+            ctx.lineTo(x + player.size / 2, y);
+            ctx.stroke();
+
+            ctx.beginPath();
+            ctx.moveTo(x - player.size / 2, y + player.size);
+            ctx.lineTo(x, y + player.size / 2);
+            ctx.stroke();
+
+            ctx.beginPath();
+            ctx.moveTo(x + player.size / 2, y + player.size);
+            ctx.lineTo(x, y + player.size / 2);
+            ctx.stroke();
+        }
+
+        // 시야 적용 그리기
+        function drawSceneWithVision(timestamp) {
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.9)';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            ctx.save();
+            ctx.beginPath();
+            const visionAngle = 15 * Math.PI / 180;
+            const visionLength = canvas.height;
+            ctx.moveTo(player.x, player.y);
+            ctx.arc(player.x, player.y, visionLength, -Math.PI / 2 - visionAngle, -Math.PI / 2 + visionAngle);
+            ctx.closePath();
+            ctx.clip();
+
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            drawTiredWorker(player.x, player.y);
+
+            enemies.forEach(enemy => {
+                drawZollaman(enemy.x, enemy.y - cameraY, 'red');
+            });
+
+            ctx.fillStyle = 'white';
+            ctx.font = `${canvas.width / 40}px Arial`;
+            ctx.fillText(`점수: ${score}`, 10, canvas.height / 20);
+
+            const elapsedTime = Math.floor((timestamp - gameStartTime) / 1000);
+            const minutes = String(Math.floor(elapsedTime / 60)).padStart(2, '0');
+            const seconds = String(elapsedTime % 60).padStart(2, '0');
+            ctx.fillText(`${minutes}:${seconds}`, canvas.width - canvas.width / 8, canvas.height - 10);
+
+            ctx.restore();
+        }
+
+        // 윈도우 리사이즈 처리
+        window.addEventListener('resize', () => {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+            player.size = Math.min(canvas.width, canvas.height) / 20;
+            player.x = canvas.width / 2;
+            player.y = canvas.height * 0.75;
+            inputX = player.x;
+            inputY = player.y;
+        });
+    </script>
+</body>
+</html>
